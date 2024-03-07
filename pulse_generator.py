@@ -1,10 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import sys, os, time
+import sys, os, time, queue
 import numpy as np, pyaudio
 
-class PulsingSoundGenerator():
+try:
+	# sudo apt-get install python3-pyqt5
+	# ~ raise("Uncomment this line is to want to force fallback to PyQt4 for testing")
+	from PyQt5.QtGui import *
+	from PyQt5.QtCore import *
+	from PyQt5.QtWidgets import *
+	PYQT_VERSION = 5
+	print("Using PyQt5")
+except:
+	# sudo apt-get install python-qtpy python3-qtpy
+	from PyQt4.QtGui import *
+	from PyQt4.QtCore import *
+	PYQT_VERSION = 4
+	print("Using PyQt4")
+
+class PulsingSoundGenerator(QObject):
 	SINE = 0
 	SINE2 = 1
 	SINE3 = 2
@@ -14,6 +29,7 @@ class PulsingSoundGenerator():
 	VARFREQ_PERIOD = 2
 
 	def __init__(self, fs=22050):
+		QObject.__init__(self)
 		self.newFrequency = None
 		self.newVolume = 0
 		self.fs = float(fs)
@@ -34,6 +50,7 @@ class PulsingSoundGenerator():
 		self.stream = None
 		self.p = pyaudio.PyAudio()
 		self.output_device_index = -1
+		self.frames_per_buffer = None
 
 		for i in range(self.p.get_device_count()):
 			name = self.p.get_device_info_by_index(i)['name']
@@ -41,29 +58,55 @@ class PulsingSoundGenerator():
 				self.output_device_index = i
 			print("%2d %s%s" % (i, "*" if self.output_device_index == i else "", name))
 
-	def start(self, fs=None):
-		if self.stream == None:
-			if fs != None:
+		self.thread = QThread()
+		self.thread.setObjectName("Sound Thread")
+		self.moveToThread(self.thread)
+		self.thread.started.connect(self._run)
+		self.thread.start()
+
+	def start(self, fs=None, frames_per_buffer=1000, buffers=3):
+		if self.stream is None:
+			if fs:
 				self.fs = float(fs)
-			self.outbuf = np.zeros(10000).astype(np.float32)
+
+			self.buffers = buffers * [np.zeros(frames_per_buffer).astype(np.float32)]
+			self.queue = queue.Queue(maxsize=buffers-1)
+			self.buf_idx = 0
 			self.bufferPreRoll = 20
 			self.phase = 0
 			self.currentVolumeFactor = 0
 			self.deltaTime = 1/self.fs
-			self.stream = self.p.open(format=pyaudio.paFloat32, channels=1, rate=int(self.fs), output=True, output_device_index=self.output_device_index, stream_callback=self.callback)
+			self.frames_per_buffer = frames_per_buffer
+
+			while not self.queue.full():
+				time.sleep(0.1)
+
+			self.stream = self.p.open(format=pyaudio.paFloat32, channels=1, rate=int(self.fs), output=True, output_device_index=self.output_device_index, stream_callback=self.callback, frames_per_buffer=frames_per_buffer)
 			self.stream.start_stream()
 
-	def callback(self, in_data, frame_count, time_info, status):
-		# this seems to help stream to start without buffer overruns
-		if self.bufferPreRoll:
-			self.bufferPreRoll-=1
-			return (self.outbuf, pyaudio.paContinue)
+	def stop(self):
+		self.frames_per_buffer = None
+		if self.stream:
+			s, self.stream = self.stream, None
+			s.stop_stream()
+			s.close()
 
-		# ~ start = time.time()
+	def _run(self):
+		while not self.thread.isInterruptionRequested():
+			if self.frames_per_buffer:
+				self.generate()
+			else:
+				time.sleep(1)
+
+	def callback(self, in_data, frame_count, time_info, status):
+		buf = self.buffers[self.queue.get()]
+		return (buf, pyaudio.paContinue)
+
+	def generate(self):
+		buf = self.buffers[self.buf_idx]
 
 		# [currentVolumeFactor * maxVolume] ---> [newVolume] ---lpf---> [volume]
-
-		for n in range(frame_count):
+		for n in range(self.frames_per_buffer):
 			if self.periodMode == self.REST_PERIOD:
 				self.deltaPhase = 2*np.pi*self.baseFrequency/self.fs
 				self.newVolume = 0
@@ -102,27 +145,27 @@ class PulsingSoundGenerator():
 			# make signal...
 			if self.waveFormType == self.SINE:
 				# simple sinewave
-				self.outbuf[n] = self.volume * np.sin(self.phase)
+				buf[n] = self.volume * np.sin(self.phase)
 
 			elif self.waveFormType == self.SINE2:
 				# squared and alternated sinewave
-				self.outbuf[n] = self.volume * np.sin(self.phase)**2 * (1 if self.phase > np.pi else -1)
+				buf[n] = self.volume * np.sin(self.phase)**2 * (1 if self.phase > np.pi else -1)
 
 			elif self.waveFormType == self.SINE3:
 				# cubed sinewave
-				self.outbuf[n] = self.volume * np.sin(self.phase)**3
+				buf[n] = self.volume * np.sin(self.phase)**3
 
 			elif self.waveFormType == self.TRIANGLE:
 				# triangle waveform
 				if self.phase <= 0.5*np.pi:
-					self.outbuf[n] = self.volume * (self.phase/(0.5*np.pi))
+					buf[n] = self.volume * (self.phase/(0.5*np.pi))
 				elif self.phase <= np.pi*1.5:
-					self.outbuf[n] = self.volume * (2-(self.phase/(0.5*np.pi)))
+					buf[n] = self.volume * (2-(self.phase/(0.5*np.pi)))
 				else:
-					self.outbuf[n] = self.volume * (-4+(self.phase/(0.5*np.pi)))
+					buf[n] = self.volume * (-4+(self.phase/(0.5*np.pi)))
 
 			else:
-				self.outbuf[n] = 0
+				buf[n] = 0
 
 			# IIR low pass filter for volume control
 			if self.newVolume != None:
@@ -131,13 +174,10 @@ class PulsingSoundGenerator():
 					self.volume, self.newVolume = self.newVolume, None
 
 		# ~ print("#" * int((time.time() - start)*1000))
-		return (self.outbuf, pyaudio.paContinue)
-
-	def stop(self):
-		if self.stream != None:
-			self.stream.stop_stream()
-			self.stream.close()
-			self.stream = None
+		self.queue.put(self.buf_idx)
+		self.buf_idx+=1
+		if self.buf_idx >= len(self.buffers):
+			self.buf_idx = 0
 
 	def __del__(self):
 		self.p.terminate()
@@ -182,21 +222,6 @@ class PulsingSoundGenerator():
 			self.currentTimeInCycle = 0
 			self.newVolume = 0
 			self.periodMode = self.REST_PERIOD
-
-try:
-	# sudo apt-get install python3-pyqt5
-	# ~ raise("Uncomment this line is to want to force fallback to PyQt4 for testing")
-	from PyQt5.QtGui import *
-	from PyQt5.QtCore import *
-	from PyQt5.QtWidgets import *
-	PYQT_VERSION = 5
-	print("Using PyQt5")
-except:
-	# sudo apt-get install python-qtpy python3-qtpy
-	from PyQt4.QtGui import *
-	from PyQt4.QtCore import *
-	PYQT_VERSION = 4
-	print("Using PyQt4")
 
 class DoubleSlider(QSlider):
 	def __init__(self, direction, minValue, maxValue, defaultValue, factor):
