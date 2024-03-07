@@ -28,6 +28,8 @@ class PulsingSoundGenerator(QObject):
 	CSTFREQ_PERIOD = 1
 	VARFREQ_PERIOD = 2
 
+	error = pyqtSignal(str)
+
 	def __init__(self, fs=22050):
 		QObject.__init__(self)
 		self.newFrequency = None
@@ -86,6 +88,14 @@ class PulsingSoundGenerator(QObject):
 
 	def stop(self):
 		self.frames_per_buffer = None
+
+		while not self.queue.empty():
+			try:
+				self.queue.get(block=False)
+
+			except queue.Empty:
+				continue
+
 		if self.stream:
 			s, self.stream = self.stream, None
 			s.stop_stream()
@@ -99,6 +109,10 @@ class PulsingSoundGenerator(QObject):
 				time.sleep(1)
 
 	def callback(self, in_data, frame_count, time_info, status):
+		if self.queue.empty():
+			self.error.emit("Buffer underrun!\nYour system is probaby too slow to run the generating code in real time.")
+			return (np.zeros(self.frames_per_buffer), pyaudio.paComplete)
+
 		buf = self.buffers[self.queue.get()]
 		return (buf, pyaudio.paContinue)
 
@@ -223,6 +237,7 @@ class PulsingSoundGenerator(QObject):
 			self.newVolume = 0
 			self.periodMode = self.REST_PERIOD
 
+
 class DoubleSlider(QSlider):
 	def __init__(self, direction, minValue, maxValue, defaultValue, factor):
 		QSlider.__init__(self, direction)
@@ -244,6 +259,7 @@ class DoubleSlider(QSlider):
 
 	def setRange(self, minValue, maxValue):
 		QSlider.setRange(self, minValue * self.factor, maxValue * self.factor)
+
 
 class FrequencyPicker(QHBoxLayout):
 	def __init__(self, unit="Hz", digitsNumber=6, decimals=2):
@@ -336,12 +352,14 @@ class FrequencyPicker(QHBoxLayout):
 				digit+=1
 		self.updateGreyness()
 
+
 class GUI(QWidget):
 	def __init__(self):
 		QWidget.__init__(self)
 		self.initUI()
 		self.sound = PulsingSoundGenerator()
 		self.sound.setFrequency(50)
+		self.sound.error.connect(self.soundError)
 		self.frequencyPicker.setValue(self.sound.baseFrequency)
 		self.frequencyPickerChanged(self.sound.baseFrequency)
 
@@ -583,6 +601,11 @@ class GUI(QWidget):
 			self.frequencyIndicator.setValue(0)
 		self.powerIndicator.setValue(int(round(self.sound.volume * 100)))
 
+	def soundError(self, message):
+		self.enableSoundCardBtn.setChecked(False)
+		self.sound.stop()
+		QMessageBox.critical(self, "Sound Generator", message)
+
 	def frequencyPickerChanged(self, frequency):
 		self.sound.setFrequency(frequency)
 		self.baseFrequency.blockSignals(True)
@@ -594,13 +617,13 @@ class GUI(QWidget):
 		self.frequencyPicker.setValue(frequency)
 		self.sound.setFrequency(frequency)
 
+
 def main():
 	app = QApplication(sys.argv)
 	gui = GUI()
 	app.installEventFilter(gui)
 	ret = app.exec_()
 	sys.exit(ret)
-
 
 def getEmbeddedIcon():
 	qpm = QPixmap()
