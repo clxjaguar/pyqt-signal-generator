@@ -26,10 +26,10 @@ class SoundGenerator():
 		if self.stream == None:
 			if fs != None:
 				self.fs = float(fs)
-			self.outbuf = np.zeros(10000).astype(np.float32)
+			self.outbuf = np.zeros(1000).astype(np.float32)
 			self.bufferPreRoll = 10
 			self.phase = 0
-			self.stream = self.p.open(format=pyaudio.paFloat32, channels=1, rate=int(self.fs), output=True, stream_callback=self.callback)
+			self.stream = self.p.open(format=pyaudio.paFloat32, channels=1, rate=int(self.fs), output=True, stream_callback=self.callback, frames_per_buffer=1000)
 			self.stream.start_stream()
 
 	def callback(self, in_data, frame_count, time_info, status):
