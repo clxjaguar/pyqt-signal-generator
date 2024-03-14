@@ -1,0 +1,4 @@
+pyaudio
+numpy
+PyQt5-sip
+PyQt5
