@@ -37,7 +37,6 @@ class SoundGenerator():
 			self.bufferPreRoll-=1
 			return (self.outbuf, pyaudio.paContinue)
 
-		start = time.time()
 		for n in range(frame_count):
 			if self.waveFormType == self.SINE:
 				# simple sinewave
@@ -75,7 +74,6 @@ class SoundGenerator():
 				if self.volume == self.oldVolume:
 					self.volume, self.newVolume = self.newVolume, None
 
-		print("#" * int((time.time() - start)*1000))
 		return (self.outbuf, pyaudio.paContinue)
 
 	def stop(self):
