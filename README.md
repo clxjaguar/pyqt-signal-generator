@@ -4,6 +4,9 @@ Some graphical user interface signal generators in python!
 ## sound_generator.py
 ![Illustration](media/sound_generator.gif)
 
+## v23_generator.py
+![Illustration](media/v23_generator.gif)
+
 ## pulse_generator.py
 ![Illustration](media/pulse_generator.gif)
 
