@@ -1,10 +1,26 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import sys, os, time, queue
+import sys, os, time, queue, threading
 import numpy as np, pyaudio
 
+try:
+	# sudo apt-get install python3-pyqt5
+	# ~ raise("Uncomment this line is to want to force fallback to PyQt4 for testing")
+	from PyQt5.QtGui import *
+	from PyQt5.QtCore import *
+	from PyQt5.QtWidgets import *
+	PYQT_VERSION = 5
+	print("Using PyQt5")
+except:
+	# sudo apt-get install python-qtpy python3-qtpy
+	from PyQt4.QtGui import *
+	from PyQt4.QtCore import *
+	PYQT_VERSION = 4
+	print("Using PyQt4")
+
 class SoundGenerator():
+	FRAMES_PER_BUFFER = 1000
 	def __init__(self, fs=44100):
 		self.newFrequency = None
 		self.newVolume = 0
@@ -20,9 +36,11 @@ class SoundGenerator():
 		self.parityOdd = False
 		self.stopBits = 1
 		self.stream = None
+		self.frame_count = None
 		self.p = pyaudio.PyAudio()
 		self.queue = queue.Queue()
 		self.waitSamples = 0
+		self.lastSymbolTimeError = 0.0
 
 		self.output_device_index = -1
 		for i in range(self.p.get_device_count()):
@@ -31,91 +49,85 @@ class SoundGenerator():
 				self.output_device_index = i
 			print("%2d %s%s" % (i, "*" if self.output_device_index == i else "", name))
 
-	def start(self, fs=None):
-		if self.stream == None:
+	def start(self, fs=None, initialBreak=False):
+		if self.stream is None:
 			if fs != None:
 				self.fs = float(fs)
-			self.outbuf = np.zeros(1000).astype(np.float32)
-			self.bufferPreRoll = 10
+			self.buffers = []
+			self.buffersNbr = 5
+			self.bufferQueue = queue.Queue(maxsize=self.buffersNbr-1)
+			for i in range(self.buffersNbr):
+				self.buffers.append(np.zeros(self.FRAMES_PER_BUFFER).astype(np.float32))
+			self.bufIn, self.bufOut = -1, -1
 			self.phase = 0
-			if True: # initial break
+			self.queue.queue.clear()
+
+			if initialBreak:
 				self.setFrequency(self.frequencySpace)
-				self.waitSamples = 2*self.fs
+				self.waitSamples = int(2.0*self.fs)
 			else:
 				self.setFrequency(self.frequencyIdle)
-				self.waitSamples = 0.5*self.fs
+				self.waitSamples = int(0.5*self.fs)
 
-			self.stream = self.p.open(format=pyaudio.paFloat32, channels=1, rate=int(self.fs), output=True, stream_callback=self.callback, output_device_index=self.output_device_index, frames_per_buffer=1000)
+			self.stream = self.p.open(format=pyaudio.paFloat32, channels=1, rate=int(self.fs), output=True, stream_callback=self.callback, output_device_index=self.output_device_index,frames_per_buffer=self.FRAMES_PER_BUFFER)
 			self.stream.start_stream()
 
-	def write(self, string):
-		self.outStr=""
-		def addBitToQueue(bit, duration=1):
-			self.outStr += "1" if bit else "0"
-			self.queue.put((self.frequencyMark if bit else self.frequencySpace, duration))
-
-		bs = string.encode(self.encoding)
-		for bc in bs:
-			if type(bc) == str:
-				bc = ord(bc) # for python 2.x
-			self.outStr += " " if self.outStr else ""
-			parityState = self.parityOdd
-			addBitToQueue(0) # START BIT
-			for p in range(0, self.bits): # LSB ... MSB
-				if 2**p & bc:
-					addBitToQueue(1)
-					parityState = not parityState
-				else:
-					addBitToQueue(0)
-
-			if self.parity:
-				addBitToQueue(1 if parityState else 0) # PARITY BIT
-
-			addBitToQueue(1, self.stopBits) # STOP BIT
-
-		print(self.outStr)
+			self.thread = threading.Thread(target=self.fillingBufferWorker)
+			self.thread.start()
 
 	def callback(self, in_data, frame_count, time_info, status):
-		if self.bufferPreRoll:
-			self.bufferPreRoll-=1
-			return (self.outbuf, pyaudio.paContinue)
+		self.frame_count = frame_count
+		if self.bufferQueue.empty():
+			print("BUFFER UNDERRUN!")
 
-		start = time.time()
+		self.bufOut = self.bufferQueue.get(block=True)
+		return self.buffers[self.bufOut], pyaudio.paContinue
 
-		for n in range(frame_count):
-			if self.waitSamples > 0:
-				self.waitSamples-=1
-			else:
-				try:
-					f, d = self.queue.get_nowait()
-					self.setFrequency(f)
-					self.waitSamples = int(round(d * self.fs / self.baudRate))
-				except:
-					self.setFrequency(self.frequencyIdle)
+	def fillingBufferWorker(self):
+		while(self.stream is not None):
+			buf = self.buffers[self.bufIn]
 
-			self.outbuf[n] = self.volume * np.sin(self.phase)
+			for n in range(self.FRAMES_PER_BUFFER):
+				if self.waitSamples > 0:
+					self.waitSamples-=1
+				else:
+					try:
+						f, d = self.queue.get_nowait()
+						self.setFrequency(f)
+						waitSamplesFloat = ((d * self.fs) / self.baudRate) - self.lastSymbolTimeError - 1
+						self.waitSamples = int(round(waitSamplesFloat))
+						self.lastSymbolTimeError = self.waitSamples - waitSamplesFloat
+					except:
+						self.setFrequency(self.frequencyIdle)
 
-			# update phase for each sample
-			self.phase+=self.deltaPhase
-			if self.phase > 2*np.pi:
-				self.phase-=2*np.pi
+				buf[n] = self.volume * np.sin(self.phase)
 
-			# low pass filter for volume control
-			if self.newVolume != None:
-				self.volume, self.oldVolume = self.volume * 0.999 + self.newVolume * 0.001, self.volume
-				if self.volume == self.oldVolume:
-					self.volume, self.newVolume = self.newVolume, None
+				# update phase for each sample
+				self.phase+=self.deltaPhase
+				if self.phase > 2*np.pi:
+					self.phase-=2*np.pi
 
-		# ~ print("#" * int((time.time() - start)*1000))
-		return (self.outbuf, pyaudio.paContinue)
+				# low pass filter for volume control
+				if self.newVolume != None:
+					self.volume, self.oldVolume = self.volume * 0.999 + self.newVolume * 0.001, self.volume
+					if self.volume == self.oldVolume:
+						self.volume, self.newVolume = self.newVolume, None
+
+			try:
+				self.bufferQueue.put(self.bufIn, timeout=1)
+			except queue.Full:
+				return
+
+			self.bufIn = (self.bufIn + 1) % self.buffersNbr
 
 	def stop(self):
-		if self.stream != None:
+		if self.stream is not None:
 			self.stream.stop_stream()
 			self.stream.close()
 			self.stream = None
 
 	def __del__(self):
+		self.stream = None
 		self.p.terminate()
 
 	def isActive(self):
@@ -151,20 +163,32 @@ class SoundGenerator():
 	def setVolume(self, volume):
 		self.newVolume = volume
 
-try:
-	# sudo apt-get install python3-pyqt5
-	# ~ raise("Uncomment this line is to want to force fallback to PyQt4 for testing")
-	from PyQt5.QtGui import *
-	from PyQt5.QtCore import *
-	from PyQt5.QtWidgets import *
-	PYQT_VERSION = 5
-	print("Using PyQt5")
-except:
-	# sudo apt-get install python-qtpy python3-qtpy
-	from PyQt4.QtGui import *
-	from PyQt4.QtCore import *
-	PYQT_VERSION = 4
-	print("Using PyQt4")
+	def write(self, string):
+		self.outStr=""
+		def addBitToQueue(bit, duration=1):
+			self.outStr += "1" if bit else "0"
+			self.queue.put((self.frequencyMark if bit else self.frequencySpace, duration))
+
+		bs = string.encode(self.encoding)
+		for bc in bs:
+			if type(bc) == str:
+				bc = ord(bc) # for python 2.x
+			self.outStr += " " if self.outStr else ""
+			parityState = self.parityOdd
+			addBitToQueue(0) # START BIT
+			for p in range(0, self.bits): # LSB ... MSB
+				if 2**p & bc:
+					addBitToQueue(1)
+					parityState = not parityState
+				else:
+					addBitToQueue(0)
+
+			if self.parity:
+				addBitToQueue(1 if parityState else 0) # PARITY BIT
+
+			addBitToQueue(1, self.stopBits) # STOP BIT
+
+		print(self.outStr)
 
 def mkQLabel(text=None, layout=None, alignment=Qt.AlignLeft, objectName=None):
 	o = QLabel()
@@ -364,7 +388,6 @@ class GUI(QWidget):
 				c.setMinimumContentsLength(5)
 				c.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
 
-
 		self.setWindowTitle("V23 Sound Generator")
 		self.show()
 
@@ -384,6 +407,10 @@ class GUI(QWidget):
 		self.enableSoundCardBtn.setEnabled(True)
 		self.soundOffTimer.stop()
 		del self.soundOffTimer
+
+	def closeEvent(self, event):
+		self.sound.stop()
+		event.accept()
 
 	def editorTextChanged(self):
 		err = False
