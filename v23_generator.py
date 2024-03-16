@@ -26,6 +26,13 @@ class SoundGenerator():
 		self.queue = queue.Queue()
 		self.waitSamples = 0
 
+		self.output_device_index = -1
+		for i in range(self.p.get_device_count()):
+			name = self.p.get_device_info_by_index(i)['name']
+			if 'pipewire' in name:
+				self.output_device_index = i
+			print("%2d %s%s" % (i, "*" if self.output_device_index == i else "", name))
+
 	def start(self, fs=None):
 		if self.stream == None:
 			if fs != None:
@@ -35,7 +42,7 @@ class SoundGenerator():
 			self.phase = 0
 			self.setFrequency(self.frequencyIdle)
 			self.waitSamples = self.fs
-			self.stream = self.p.open(format=pyaudio.paFloat32, channels=1, rate=int(self.fs), output=True, stream_callback=self.callback, frames_per_buffer=1000)
+			self.stream = self.p.open(format=pyaudio.paFloat32, channels=1, rate=int(self.fs), output=True, stream_callback=self.callback, output_device_index=self.output_device_index, frames_per_buffer=1000)
 			self.stream.start_stream()
 
 	def write(self, string):
@@ -151,50 +158,20 @@ except:
 	PYQT_VERSION = 4
 	print("Using PyQt4")
 
+class MyQPlainTextEdit(QPlainTextEdit):
+	keyPressWithControlPressed = pyqtSignal(int)
+	def keyPressEvent(self, event):
+		key = event.key()
+		if event.modifiers() & Qt.CTRL:
+			self.keyPressWithControlPressed.emit(key)
+		else:
+			QPlainTextEdit.keyPressEvent(self, event)
+
 class GUI(QWidget):
 	def __init__(self):
-		super(GUI, self).__init__()
+		QWidget.__init__(self)
 		self.initUI()
 		self.sound = SoundGenerator()
-
-	def enableSoundCardBtnClicked(self):
-		if self.enableSoundCardBtn.isChecked():
-			self.sound.setVolume(self.v.value() / 100.0)
-			self.sound.start()
-		else:
-			self.sound.setVolume(0)
-			self.soundOffTimer = QTimer()
-			self.soundOffTimer.timeout.connect(self.soundOff)
-			self.soundOffTimer.start(500)
-			self.enableSoundCardBtn.setEnabled(False)
-
-	def soundOff(self):
-		self.sound.stop()
-		self.enableSoundCardBtn.setEnabled(True)
-		self.soundOffTimer.stop()
-		del self.soundOffTimer
-
-	def editorTextChanged(self):
-		err = False
-		text = self.editor.toPlainText()
-
-		i = self.editor.lastLen
-		while i < len(text):
-			# ~ self.sound.write(c); continue;
-			try:
-				c = text[i]
-				self.sound.write(c)
-				i+=1
-			except Exception as e:
-				print(c+":", e)
-				text = text[:i] + text[i+1:]; err = True
-		self.editor.lastLen = len(text)
-
-		if err:
-			self.editor.blockSignals(True)
-			self.editor.setPlainText(text)
-			self.editor.moveCursor(QTextCursor.End)
-			self.editor.blockSignals(False)
 
 	def initUI(self):
 		self.setStyleSheet("\
@@ -228,10 +205,11 @@ class GUI(QWidget):
 			return btn
 
 		# where we'll be typing stuff
-		self.editor = QPlainTextEdit()
+		self.editor = MyQPlainTextEdit()
 		self.editor.lastLen = 0
 		self.editor.setWordWrapMode(QTextOption.NoWrap)
 		self.editor.textChanged.connect(self.editorTextChanged)
+		self.editor.keyPressWithControlPressed.connect(self.editorKeyWithControlPressed)
 		self.editor.cursorPositionChanged.connect(lambda: self.editor.moveCursor(QTextCursor.End))
 		layout.addWidget(self.editor)
 
@@ -349,10 +327,64 @@ class GUI(QWidget):
 		self.show()
 		self.setMaximumHeight(self.height())
 
+	def enableSoundCardBtnClicked(self):
+		if self.enableSoundCardBtn.isChecked():
+			self.sound.setVolume(self.v.value() / 100.0)
+			self.sound.start()
+		else:
+			self.sound.setVolume(0)
+			self.soundOffTimer = QTimer()
+			self.soundOffTimer.timeout.connect(self.soundOff)
+			self.soundOffTimer.start(500)
+			self.enableSoundCardBtn.setEnabled(False)
+
+	def soundOff(self):
+		self.sound.stop()
+		self.enableSoundCardBtn.setEnabled(True)
+		self.soundOffTimer.stop()
+		del self.soundOffTimer
+
+	def editorTextChanged(self):
+		err = False
+		text = self.editor.toPlainText()
+
+		i = self.editor.lastLen
+		while i < len(text):
+			try:
+				c = text[i]
+				if c == "\n":
+					c="\r\n"
+				self.sound.write(c)
+				i+=1
+			except Exception as e:
+				print(c+":", e)
+				text = text[:i] + text[i+1:]; err = True
+		self.editor.lastLen = len(text)
+
+		if err:
+			self.editor.blockSignals(True)
+			self.editor.setPlainText(text)
+			self.editor.moveCursor(QTextCursor.End)
+			self.editor.blockSignals(False)
+
+	def editorKeyWithControlPressed(self, key):
+		try:
+			if key == Qt.Key_L: # clear screen
+				self.sound.write("\x0c")
+				self.editor.setPlainText("")
+			elif key == Qt.Key_G: # bell
+				self.sound.write("\x07")
+			elif key == Qt.Key_Space:
+				self.sound.write("\x00")
+			elif Qt.Key_A <= key <= Qt.Key_Z:
+				asc = key - Qt.Key_A + 1
+				self.sound.write("%c" % asc)
+		except Exception as e:
+			print(e)
+
 def main():
 	app = QApplication(sys.argv)
 	gui = GUI()
-	app.installEventFilter(gui)
 	ret = app.exec_()
 	sys.exit(ret)
 
