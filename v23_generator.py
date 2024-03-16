@@ -49,7 +49,7 @@ class SoundGenerator():
 				self.output_device_index = i
 			print("%2d %s%s" % (i, "*" if self.output_device_index == i else "", name))
 
-	def start(self, fs=None, initialBreak=False):
+	def start(self, fs=None, initialBreak=True):
 		if self.stream is None:
 			if fs != None:
 				self.fs = float(fs)
@@ -345,7 +345,7 @@ class GUI(QWidget):
 		layout2.addWidget(QLabel("Modulation frequencies :"))
 		layout2.addStretch()
 		self.modulationsFrequenciesCombo = QComboBox()
-		self.modulationsFrequenciesCombo.insertItems(0, ['Mode 1 (1300/1700/1500)', 'Mode 2 (1300/2100/1700)', 'Minitel (1300/2100)'])
+		self.modulationsFrequenciesCombo.insertItems(0, ['Mode 1 (1300/1700/1500)', 'Mode 2 (1300/2100/1700)', 'Minitel (1300/2100)', 'Minitel Uplink (390/450)'])
 		self.modulationsFrequenciesCombo.setCurrentIndex(2)
 		def fct():
 			try:
