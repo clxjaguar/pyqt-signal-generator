@@ -14,9 +14,7 @@ class SoundGenerator():
 		self.deltaPhase = 0
 		self.encoding = 'ascii'
 		self.baudRate = 1200
-		self.frequencyIdle = 1500
-		self.frequencyMark = 1300 # 1
-		self.frequencySpace = 2100 # 0
+		self.setFrequencies()
 		self.bits = 7
 		self.parity = True
 		self.parityOdd = False
@@ -40,8 +38,13 @@ class SoundGenerator():
 			self.outbuf = np.zeros(1000).astype(np.float32)
 			self.bufferPreRoll = 10
 			self.phase = 0
-			self.setFrequency(self.frequencyIdle)
-			self.waitSamples = self.fs
+			if True: # initial break
+				self.setFrequency(self.frequencySpace)
+				self.waitSamples = 2*self.fs
+			else:
+				self.setFrequency(self.frequencyIdle)
+				self.waitSamples = 0.5*self.fs
+
 			self.stream = self.p.open(format=pyaudio.paFloat32, channels=1, rate=int(self.fs), output=True, stream_callback=self.callback, output_device_index=self.output_device_index, frames_per_buffer=1000)
 			self.stream.start_stream()
 
@@ -124,6 +127,11 @@ class SoundGenerator():
 		self.frequency = frequency
 		self.deltaPhase = 2*np.pi*self.frequency/self.fs
 
+	def setFrequencies(self, mark=1300, space=2100, idle=1300):
+		self.frequencyIdle = idle
+		self.frequencyMark = mark # 1
+		self.frequencySpace = space # 0
+
 	def setBaudRate(self, baudRate):
 		self.baudRate = baudRate
 
@@ -158,6 +166,32 @@ except:
 	PYQT_VERSION = 4
 	print("Using PyQt4")
 
+def mkQLabel(text=None, layout=None, alignment=Qt.AlignLeft, objectName=None):
+	o = QLabel()
+	if objectName:
+		o.setObjectName(objectName)
+	o.setAlignment(alignment)
+	if text:
+		o.setText(text)
+	if layout != None:
+		layout.addWidget(o)
+	return o
+
+def mkButton(text, layout=None, function=None, gridPlacement=(0,0), gridSpan=(1,1), isCheckable=False):
+	btn = QPushButton(text)
+	btn.setFocusPolicy(Qt.TabFocus)
+	btn.setCheckable(isCheckable)
+	if function:
+		btn.clicked.connect(function)
+	if type(layout) == QGridLayout:
+		layout.addWidget(btn, gridPlacement[0], gridPlacement[1], gridSpan[0], gridSpan[1])
+
+	elif layout != None:
+		layout.addWidget(btn)
+
+	return btn
+
+
 class MyQPlainTextEdit(QPlainTextEdit):
 	keyPressWithControlPressed = pyqtSignal(int)
 	def keyPressEvent(self, event):
@@ -166,6 +200,7 @@ class MyQPlainTextEdit(QPlainTextEdit):
 			self.keyPressWithControlPressed.emit(key)
 		else:
 			QPlainTextEdit.keyPressEvent(self, event)
+
 
 class GUI(QWidget):
 	def __init__(self):
@@ -180,29 +215,6 @@ class GUI(QWidget):
 		");
 
 		layout = QVBoxLayout(self)
-
-		def mkQLabel(text=None, layout=None, alignment=Qt.AlignLeft, objectName=None):
-			o = QLabel()
-			if objectName:
-				o.setObjectName(objectName)
-			o.setAlignment(alignment)
-			if text:
-				o.setText(text)
-			if layout != None:
-				layout.addWidget(o)
-			return o
-
-		def mkButton(text, layout=None, function=None, gridPlacement=(0,0), gridSpan=(1,1), isCheckable=False):
-			btn = QPushButton(text)
-			btn.setFocusPolicy(Qt.TabFocus)
-			btn.setCheckable(isCheckable)
-			if function:
-				btn.clicked.connect(function)
-			if type(layout) == QGridLayout:
-				layout.addWidget(btn, gridPlacement[0], gridPlacement[1], gridSpan[0], gridSpan[1])
-			elif layout:
-				layout.addWidget(btn)
-			return btn
 
 		# where we'll be typing stuff
 		self.editor = MyQPlainTextEdit()
@@ -228,23 +240,6 @@ class GUI(QWidget):
 		self.encodingCombo.currentTextChanged.connect(fct)
 		self.encodingCombo.setEditable(True)
 		layout2.addWidget(self.encodingCombo)
-		layout.addLayout(layout2)
-
-		# baudrate
-		layout2 = QHBoxLayout()
-		layout2.addWidget(QLabel("Transmission rate (Bauds) :"))
-		layout2.addStretch()
-		self.baudRateCombo = QComboBox()
-		self.baudRateCombo.insertItems(0, ['75', '300', '600', '1200'])
-		self.baudRateCombo.setCurrentIndex(3)
-		def fct():
-			try:
-				self.sound.setBaudRate(float(self.baudRateCombo.currentText()))
-			except:
-				self.baudRateCombo.setEditText("%g" % self.sound.baudRate)
-		self.baudRateCombo.currentTextChanged.connect(fct)
-		self.baudRateCombo.setEditable(True)
-		layout2.addWidget(self.baudRateCombo)
 		layout.addLayout(layout2)
 
 		# bit per word
@@ -280,12 +275,6 @@ class GUI(QWidget):
 		layout2.addWidget(self.stopBitsCombo)
 		layout.addLayout(layout2)
 
-		# for each combobox
-		for c in self.encodingCombo, self.baudRateCombo, self.bitsCombo, self.stopBitsCombo:
-				c.setEditable(True)
-				c.setMinimumContentsLength(5)
-				c.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-
 		# parity
 		layout2 = QHBoxLayout()
 		layout2.addWidget(QLabel("Parity :"))
@@ -310,6 +299,52 @@ class GUI(QWidget):
 			layout2.addWidget(radio)
 		layout.addLayout(layout2)
 
+		# baudrate
+		layout2 = QHBoxLayout()
+		layout2.addWidget(QLabel("Transmission rate (Bauds) :"))
+		layout2.addStretch()
+		self.baudRateCombo = QComboBox()
+		self.baudRateCombo.insertItems(0, ['75', '300', '600', '1200'])
+		self.baudRateCombo.setCurrentIndex(3)
+		def fct():
+			try:
+				self.sound.setBaudRate(float(self.baudRateCombo.currentText()))
+			except:
+				self.baudRateCombo.setEditText("%g" % self.sound.baudRate)
+		self.baudRateCombo.currentTextChanged.connect(fct)
+		self.baudRateCombo.setEditable(True)
+		layout2.addWidget(self.baudRateCombo)
+		layout.addLayout(layout2)
+
+		# modulation frequencies
+		layout2 = QHBoxLayout()
+		layout2.addWidget(QLabel("Modulation frequencies :"))
+		layout2.addStretch()
+		self.modulationsFrequenciesCombo = QComboBox()
+		self.modulationsFrequenciesCombo.insertItems(0, ['Mode 1 (1300/1700/1500)', 'Mode 2 (1300/2100/1700)', 'Minitel (1300/2100)'])
+		self.modulationsFrequenciesCombo.setCurrentIndex(2)
+		def fct():
+			try:
+				frequencies = list(map(float, self.modulationsFrequenciesCombo.currentText().split("(")[-1].replace(")", "").split("/")))
+				mark = frequencies[0]
+				space = frequencies[1]
+
+				idle = frequencies[2] if len(frequencies) > 2 else mark
+				# ~ else :
+					# ~ idle = mark
+				self.sound.setFrequencies(mark, space, idle)
+				print(mark, space, idle)
+
+			except Exception as e:
+				print(e)
+				self.modulationsFrequenciesCombo.blockSignals(True)
+				self.modulationsFrequenciesCombo.setEditText("%g/%g/%g" % (self.sound.frequencyMark, self.sound.frequencySpace, self.sound.frequencyIdle))
+				self.modulationsFrequenciesCombo.blockSignals(False)
+		self.modulationsFrequenciesCombo.currentTextChanged.connect(fct)
+		self.modulationsFrequenciesCombo.setEditable(True)
+		layout2.addWidget(self.modulationsFrequenciesCombo)
+		layout.addLayout(layout2)
+
 		# sound
 		layout2 = QHBoxLayout()
 		self.v = QSlider(Qt.Horizontal)
@@ -323,9 +358,15 @@ class GUI(QWidget):
 		self.enableSoundCardBtn = mkButton("&Enable sound", layout2, self.enableSoundCardBtnClicked, isCheckable=True)
 		layout.addLayout(layout2)
 
+		# for each combobox
+		for c in self.encodingCombo, self.baudRateCombo, self.bitsCombo, self.stopBitsCombo:
+				c.setEditable(True)
+				c.setMinimumContentsLength(5)
+				c.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+
+
 		self.setWindowTitle("V23 Sound Generator")
 		self.show()
-		self.setMaximumHeight(self.height())
 
 	def enableSoundCardBtnClicked(self):
 		if self.enableSoundCardBtn.isChecked():
@@ -347,6 +388,11 @@ class GUI(QWidget):
 	def editorTextChanged(self):
 		err = False
 		text = self.editor.toPlainText()
+
+		if len(text) == self.editor.lastLen - 1:
+			self.sound.write("\x08 \x08")
+			self.editor.lastLen = len(text)
+			return
 
 		i = self.editor.lastLen
 		while i < len(text):
@@ -381,6 +427,7 @@ class GUI(QWidget):
 				self.sound.write("%c" % asc)
 		except Exception as e:
 			print(e)
+
 
 def main():
 	app = QApplication(sys.argv)
