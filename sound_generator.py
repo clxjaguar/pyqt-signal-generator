@@ -21,6 +21,13 @@ class SoundGenerator():
 		self.deltaPhase = 0
 		self.stream = None
 		self.p = pyaudio.PyAudio()
+		self.output_device_index = -1
+
+		for i in range(self.p.get_device_count()):
+			name = self.p.get_device_info_by_index(i)['name']
+			if 'pipewire' in name:
+				self.output_device_index = i
+			print("%2d %s%s" % (i, "*" if self.output_device_index == i else "", name))
 
 	def start(self, fs=None):
 		if self.stream == None:
@@ -29,7 +36,7 @@ class SoundGenerator():
 			self.outbuf = np.zeros(1000).astype(np.float32)
 			self.bufferPreRoll = 10
 			self.phase = 0
-			self.stream = self.p.open(format=pyaudio.paFloat32, channels=1, rate=int(self.fs), output=True, stream_callback=self.callback, frames_per_buffer=1000)
+			self.stream = self.p.open(format=pyaudio.paFloat32, channels=1, rate=int(self.fs), output=True, output_device_index=self.output_device_index, stream_callback=self.callback, frames_per_buffer=1000)
 			self.stream.start_stream()
 
 	def callback(self, in_data, frame_count, time_info, status):
