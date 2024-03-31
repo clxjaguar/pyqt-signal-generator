@@ -285,7 +285,7 @@ class GUI(QWidget):
 
 		# stop bit duration (in bits)
 		layout2 = QHBoxLayout()
-		layout2.addWidget(QLabel("Stop Bits :"))
+		layout2.addWidget(QLabel("Stop bit duration :"))
 		layout2.addStretch()
 		self.stopBitsCombo = QComboBox()
 		self.stopBitsCombo.insertItems(0, ['1', '1.5', '2'])
