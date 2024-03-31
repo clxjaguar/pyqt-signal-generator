@@ -218,12 +218,68 @@ def mkButton(text, layout=None, function=None, gridPlacement=(0,0), gridSpan=(1,
 
 class MyQPlainTextEdit(QPlainTextEdit):
 	keyPressWithControlPressed = pyqtSignal(int)
+	def __init__(self):
+		QPlainTextEdit.__init__(self)
+		self.setAcceptDrops(False)
+
 	def keyPressEvent(self, event):
 		key = event.key()
 		if event.modifiers() & Qt.CTRL:
 			self.keyPressWithControlPressed.emit(key)
 		else:
 			QPlainTextEdit.keyPressEvent(self, event)
+
+
+class FileSendingWindow(QDialog):
+	def __init__(self, parent, sound, filename):
+		QDialog.__init__(self, parent)
+		self.setAttribute(Qt.WA_DeleteOnClose)
+		self.timer = QTimer(self)
+		try:
+			self.sound = sound
+			self.fd = open(filename, "rb")
+			self.setWindowTitle("Transmitting file")
+			self.setMinimumWidth(300)
+			self.layout = QVBoxLayout(self)
+			self.label = QLabel('Transmitting "%s"...' % (os.path.basename(filename)))
+			self.layout.addWidget(self.label)
+			self.progressBar = QProgressBar()
+			self.progressBar.setValue(0)
+			self.progressBar.setMaximum(os.path.getsize(filename))
+			self.layout.addWidget(self.progressBar)
+			self.cancelButton = QPushButton("Stop")
+			self.cancelButton.clicked.connect(self.cancel)
+			self.layout.addWidget(self.cancelButton)
+			self.show()
+			self.timer.timeout.connect(self.send)
+			self.timer.start(50)
+		except Exception as e:
+			QMessageBox.critical(self, "Error", str(e))
+			self.close()
+
+	def send(self):
+		if self.sound.stream is None:
+			return
+		try:
+			while self.sound.queue.qsize() < self.sound.baudRate * 0.2:
+				c = self.fd.read(1).decode(self.sound.encoding)
+				if c == "":
+					self.timer.stop()
+					QTimer.singleShot(1000, self.close)
+					break
+				self.sound.write(c)
+			self.progressBar.setValue(self.fd.tell())
+
+		except Exception as e:
+			self.timer.stop()
+			QMessageBox.critical(self, "Error", str(e))
+			self.close()
+
+	def closeEvent(self, event):
+		self.timer.stop()
+
+	def cancel(self):
+		self.close()
 
 
 class GUI(QWidget):
@@ -354,8 +410,6 @@ class GUI(QWidget):
 				space = frequencies[1]
 
 				idle = frequencies[2] if len(frequencies) > 2 else mark
-				# ~ else :
-					# ~ idle = mark
 				self.sound.setFrequencies(mark, space, idle)
 				print(mark, space, idle)
 
@@ -371,15 +425,21 @@ class GUI(QWidget):
 
 		# sound
 		layout2 = QHBoxLayout()
+		layout2.addWidget(QLabel("Amplitude :"))
 		self.v = QSlider(Qt.Horizontal)
 		self.v.setToolTip("Adjust Volume")
 		self.v.setMinimum(0)
 		self.v.setMaximum(100)
 		self.v.setValue(10)
 		self.v.valueChanged.connect(lambda: self.sound.setVolume(self.v.value() / 100.0))
+		self.v.setFixedWidth(self.modulationsFrequenciesCombo.width())
 		layout2.addWidget(self.v)
+		layout.addLayout(layout2)
 
+		layout2 = QHBoxLayout()
 		self.enableSoundCardBtn = mkButton("&Enable sound", layout2, self.enableSoundCardBtnClicked, isCheckable=True)
+		self.sendFileBtn = mkButton("&Send File...", layout2, self.sendFileBtnClicked)
+		self.sendFileBtn.setEnabled(False)
 		layout.addLayout(layout2)
 
 		# for each combobox
@@ -389,18 +449,46 @@ class GUI(QWidget):
 				c.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
 
 		self.setWindowTitle("V23 Sound Generator")
+		self.setAcceptDrops(True)
 		self.show()
+
+	def dragEnterEvent(self, e):
+		if e.mimeData().hasUrls: e.accept()
+		else:                    e.ignore()
+
+	def dragMoveEvent(self, e):
+		if e.mimeData().hasUrls: e.accept()
+		else:                    e.ignore()
+
+	def dropEvent(self, e):
+		if e.mimeData().hasUrls:
+			# ~ e.setDropAction(Qt.CopyAction)
+			e.accept()
+			for url in e.mimeData().urls():
+				filename = url.toLocalFile()
+				FileSendingWindow(self, self.sound, filename)
+		else:
+			e.ignore()
+
+	def sendFileBtnClicked(self):
+		dialog = QFileDialog(self)
+		dialog.setFileMode(QFileDialog.AnyFile)
+		if dialog.exec_():
+			for filename in dialog.selectedFiles():
+				FileSendingWindow(self, self.sound, filename)
 
 	def enableSoundCardBtnClicked(self):
 		if self.enableSoundCardBtn.isChecked():
 			self.sound.setVolume(self.v.value() / 100.0)
 			self.sound.start()
+			self.sendFileBtn.setEnabled(True)
 		else:
 			self.sound.setVolume(0)
 			self.soundOffTimer = QTimer()
 			self.soundOffTimer.timeout.connect(self.soundOff)
 			self.soundOffTimer.start(500)
 			self.enableSoundCardBtn.setEnabled(False)
+			self.sendFileBtn.setEnabled(False)
 
 	def soundOff(self):
 		self.sound.stop()
