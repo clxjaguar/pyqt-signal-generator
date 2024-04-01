@@ -163,14 +163,16 @@ class SoundGenerator():
 	def setVolume(self, volume):
 		self.newVolume = volume
 
-	def write(self, string):
+	def write(self, data):
 		self.outStr=""
 		def addBitToQueue(bit, duration=1):
 			self.outStr += "1" if bit else "0"
 			self.queue.put((self.frequencyMark if bit else self.frequencySpace, duration))
 
-		bs = string.encode(self.encoding)
-		for bc in bs:
+		if type(data) != bytes:
+			data = data.encode(self.encoding)
+
+		for bc in data:
 			if type(bc) == str:
 				bc = ord(bc) # for python 2.x
 			self.outStr += " " if self.outStr else ""
@@ -262,8 +264,8 @@ class FileSendingWindow(QDialog):
 			return
 		try:
 			while self.sound.queue.qsize() < self.sound.baudRate * 0.2:
-				c = self.fd.read(1).decode(self.sound.encoding)
-				if c == "":
+				c = self.fd.read(1)
+				if c == b'':
 					self.timer.stop()
 					QTimer.singleShot(1000, self.close)
 					break
@@ -438,7 +440,7 @@ class GUI(QWidget):
 
 		layout2 = QHBoxLayout()
 		self.enableSoundCardBtn = mkButton("&Enable sound", layout2, self.enableSoundCardBtnClicked, isCheckable=True)
-		self.sendFileBtn = mkButton("&Send File...", layout2, self.sendFileBtnClicked)
+		self.sendFileBtn = mkButton("&Send file...", layout2, self.sendFileBtnClicked)
 		self.sendFileBtn.setEnabled(False)
 		layout.addLayout(layout2)
 
